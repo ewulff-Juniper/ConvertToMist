@@ -1,0 +1,79 @@
+{
+    "junos-http": {
+        "protocol": "tcp",
+        "port_range": "80"
+    },
+    "junos-https": {
+        "protocol": "tcp",
+        "port_range": "443"
+    },
+    "junos-ftp": {
+        "protocol": "tcp",
+        "port_range": "21"
+    },
+    "junos-ftp-data": {
+        "protocol": "tcp",
+        "port_range": "20"
+    },
+    "junos-ssh": {
+        "protocol": "tcp",
+        "port_range": "22"
+    },
+    "junos-tcp-any": {
+        "protocol": "tcp",
+        "port_range": "1-65535"
+    },
+    "junos-udp-any": {
+        "protocol": "udp",
+        "port_range": "1-65535"
+    },
+    "junos-telnet": {
+        "protocol": "tcp",
+        "port_range": "23"
+    },
+    "junos-tftp": {
+        "protocol": "udp",
+        "port_range": "69"
+    },
+    "junos-smtp": {
+        "protocol": "tcp",
+        "port_range": "25"
+    },
+    "junos-dns-udp": {
+        "protocol": "udp",
+        "port_range": "53"
+    },
+    "junos-dns-tcp": {
+        "protocol": "tcp",
+        "port_range": "53"
+    },
+    "junos-ntp": {
+        "protocol": "udp",
+        "port_range": "123"
+    },
+    "junos-echo": {
+        "protocol": "udp",
+        "port_range": "7"
+    },
+    "junos-dhcp-server": {
+        "protocol": "udp",
+        "port_range": "67"
+    },
+    "junos-dhcp-relay": {
+        "protocol": "udp",
+        "port_range": "67"
+    },
+    "junos-dhcp-client": {
+        "protocol": "udp",
+        "port_range": "68"
+    },
+    "junos-icmp-all": {
+        "protocol": "icmp"
+    },
+    "junos-ping": {
+        "protocol": "icmp"
+    },
+    "any": {
+        "protocol": "any"
+    }
+}
