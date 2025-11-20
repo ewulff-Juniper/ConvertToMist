@@ -1,7 +1,12 @@
 import os.path
 
+from netaddr.ip import IPAddress, IPNetwork
+
 import UIToolsP3
+
 import mistapi
+import netaddr
+
 import json
 import getopt
 import sys
@@ -149,6 +154,101 @@ def read_junos_policies(conf_file):
 
     return policies_dict
 
+def read_junos_zones(conf_file):
+    '''
+        :param conf_file:
+        :return: zone dict in form of:
+        zones_dict: {
+            'ZONE': {
+                'interfaces': [],
+                'host-inbound-traffic': []
+            }
+        }
+    '''
+    ofile = open(conf_file, 'r')
+
+    zone_dict = {}
+    for line in ofile:
+        if line.startswith("set security zones security-zone"):
+            delimit = line.split(" ")
+            zone = delimit[4].strip()
+            if zone not in zone_dict: zone_dict[zone] = {'interfaces': [], 'host-inbound-traffic': []}
+            if delimit[5] == "interfaces":
+                interface = delimit[6].strip()
+                if interface not in zone_dict[zone]['interfaces']: zone_dict[zone]['interfaces'].append(interface)
+                if len(delimit) > 7: #not just listing the interface
+                    if delimit[7] == 'host-inbound-traffic':
+                        #This would mean host-inbound-traffic per interface in zone
+                        pass
+            elif delimit[5] == 'host-inbound-traffic':
+                hit = delimit[6].strip() + ' ' + delimit[7].strip()
+                if hit not in zone_dict[zone]['host-inbound-traffic']: zone_dict[zone]['host-inbound-traffic'].append(hit)
+    return zone_dict
+
+def read_junos_interfaces(conf_file):
+    '''
+        :param conf_file:
+        :return: interface dict in form of:
+        interface_dict: {
+            'INTERFACE': {
+                'description': '',
+                'units': {
+                    'UNIT': {
+                        'description': '',
+                        'family': '',
+                        'address': '',
+                        'interface mode': '',
+                        'vlan members': ''
+                    }
+                }
+            }
+        }
+    '''
+    ofile = open(conf_file, 'r')
+
+    #TODO Add vlan lookup to connect IRBs
+
+    interface_dict = {}
+    for line in ofile:
+        line = line.strip()
+        if line.startswith('set interfaces'):
+            delimit = line.split(' ')
+            interface = delimit[2]
+            if interface not in interface_dict:
+                interface_dict[interface] = {
+                    'description': '',
+                    'units': {}
+                }
+            if delimit[3] == 'description':
+                description = ' '.join(delimit[4:])
+                interface_dict[interface]['description'] = description
+            elif delimit[3] == 'unit':
+                unit = delimit[4]
+                if unit not in interface_dict[interface]['units']:
+                    interface_dict[interface]['units'][unit] = {
+                        'description': '',
+                        'family': '',
+                        'address': '',
+                        'interface mode': '',
+                        'vlan members': []
+                    }
+                if delimit[5] == 'description':
+                    interface_dict[interface]['units'][unit]['description'] = ' '.join(delimit[6:])
+                elif delimit[5] == 'family':
+                    family = delimit[6]
+                    interface_dict[interface]['units'][unit]['family'] = family
+                    if delimit[7] == 'address':
+                        address = delimit[8]
+                        interface_dict[interface]['units'][unit]['address'] = address
+                    elif delimit[7] == 'vlan':
+                        vlans = delimit[9:]
+                        interface_dict[interface]['units'][unit]['vlan members'] = vlans
+                    elif delimit[7] == 'interface-mode':
+                        interface_mode = delimit[8]
+                        interface_dict[interface]['units'][unit]['interface mode'] = interface_mode
+
+    return interface_dict
+
 def app_lookup(names, junos_apps, problem_cases):
     '''
     :param names: application names to lookup
@@ -204,27 +304,41 @@ def ingest_SRX():
     junos_apps = read_junos_apps(conf_file)
     with open('junos_apps.json', 'w+') as of:
         of.write(json.dumps(junos_apps, indent=4))
+
     junos_adds = read_junos_addresses(conf_file)
     with open('junos_adds.json', 'w+') as of:
         of.write(json.dumps(junos_adds, indent=4))
+
     junos_policies = read_junos_policies(conf_file)
     with open('junos_policies.json', 'w+') as of:
         of.write(json.dumps(junos_policies, indent=4))
 
-    #Build Mist Applications
+    junos_zones = read_junos_zones(conf_file)
+    with open('junos_zones.json', 'w+') as of:
+        of.write(json.dumps(junos_zones, indent=4))
+
+    junos_interfaces = read_junos_interfaces(conf_file)
+    with open('junos_interfaces.json', 'w+') as of:
+        of.write(json.dumps(junos_interfaces, indent=4))
+
+    #Build Mist Objects
     mist_apps = {}
+    organized_nets = {}
+    mist_policies = {}
     for fztz in junos_policies.values():
         for policy_name, policy in fztz["Policies"].items():
+
+            #For Each Junos Policy
+
+
+            #Build Mist App
+            mist_services = []
             dapp_obj = policy['Application']['match_set']
-            #print(json.dumps(dapp_obj, indent=4))
             mist_app = {"name": policy['Application']['app_name'],
                         "description": 'Original Policy Name: '+policy_name,
                         "type": "custom",
                         "traffic_type": "default",
                         "specs": app_lookup(dapp_obj["application"], junos_apps, problem_cases)}
-            # for app in dapp_obj["application"]:
-            #     if "specs" not in mist_app: mist_app["specs"] = []
-            #     mist_app["specs"].append(app_lookup(app, junos_apps, return_list=False))
 
             m_dadd = []
             for dadd in dapp_obj["destination-address"]:
@@ -251,19 +365,95 @@ def ingest_SRX():
                     if existing_app_copy == new_app_copy:
                         print('Fully duplicate app')
                     else:
-                        mist_app['name'] += '_dupe'
+                        mist_app['name'] += '_dupe' #TODO better dupe handling
             dapp_obj["mist_app"] = mist_app
             mist_apps[mist_app["name"]] = mist_app
+            mist_services = [mist_app['name']]
+
+
+            #Build Source Network
+            source_zone = fztz['FromZone']
+            if source_zone not in organized_nets:
+                organized_nets[source_zone] = {'interface nets': {}, 'indirect nets': {}}
+
+            #Build Interface Networks
+            zints = junos_zones[source_zone]['interfaces']
+            for zint in zints:
+                zint_name = zint.split('.')[0]
+                zint_unit = zint.split('.')[1]
+                if zint_name.startswith(('irb', 'ge', 'xe', 'et')): #TODO add support for more interfaces
+                    if zint_name in junos_interfaces:
+                        if zint_unit in junos_interfaces[zint_name]['units']:
+                            if junos_interfaces[zint_name]['units'][zint_unit]['address'] != "":
+                                int_net = IPNetwork(junos_interfaces[zint_name]['units'][zint_unit]['address'])
+                                if zint not in organized_nets[source_zone]['interface nets']:
+                                    organized_nets[source_zone]['interface nets'][zint] = {
+                                        'name': (source_zone+'_'+zint).replace('.','_').replace('-','_').replace(' ','_'),
+                                        'subnet': str(int_net.cidr),
+                                        'routed_for_networks': []
+                                    }
+                            else: print('No address for interface '+zint)
+                    else: print('Could not find interface '+zint)
+                else:
+                    print('Interface '+zint+' not currently supported, ignoring')
+
+            #Build Indirect Networks
+            mist_tenants = []
+            for source_addr in policy['Application']['match_set']['source-address']:
+                addr_name = (source_zone+'_'+source_addr).replace('.','_').replace('-','_').replace(' ','_')
+                if source_addr in junos_adds:
+                    idx = 0
+                    for result in junos_adds[source_addr]:
+                        idx += 1
+                        if result not in organized_nets[source_zone]['indirect nets']:
+                            organized_nets[source_zone]['indirect nets'][result] = {
+                                'name': addr_name+'_'+str(idx),
+                                'subnet': result
+                            }
+                            mist_tenants.append(addr_name+'_'+str(idx))
+                        else:  mist_tenants.append(organized_nets[source_zone]['indirect nets'][result]['name'])
+                elif source_addr == "any":
+                    if addr_name not in organized_nets[source_zone]['indirect nets']:
+                        organized_nets[source_zone]['indirect nets'][addr_name] = {
+                            'name': addr_name,
+                            'subnet': '0.0.0.0/0'
+                        }
+                        mist_tenants.append(addr_name)
+                    else: mist_tenants.append(organized_nets[source_zone]['indirect nets'][addr_name]['name'])
+                else: print('Source address '+source_addr+' not found')
+
+            #Build Policy
+            mist_policy_name = policy_name.strip().replace('.','_').replace('-','_').replace(' ','_')
+            mist_policies[policy_name] = {
+                'name': mist_policy_name,
+                'action': 'allow' if policy['Action'] == 'permit' else 'deny',
+                'tenants': mist_tenants,
+                'services': mist_services
+            }
+
+    #Indirectly attach indirect nets to their interface nets
+    for zone_nets in organized_nets.values():
+        for int_net in zone_nets['interface nets']:
+            for indirect_net in zone_nets['indirect nets']:
+                zone_nets['interface nets'][int_net]['routed_for_networks'].append(zone_nets['indirect nets'][indirect_net]['name'])
+
+
     with open('mist_apps.json', 'w+') as of:
         of.write(json.dumps(mist_apps, indent=4))
     print('Mist Apps created')
+
+    with open('organized_nets.json', 'w+') as of:
+        of.write(json.dumps(organized_nets, indent=4))
+
+    with open('mist_policies.json', 'w+') as of:
+        of.write(json.dumps(mist_policies, indent=4))
 
     with open("problem_cases_output.json", "w") as of:
         of.write(json.dumps(problem_cases, indent=4))
 
 def push_apps():
     if not os.path.exists('mist_apps.json'):
-        print('There are now Mist Applications ready to push, ingest configuration first')
+        print('There are no Mist Applications ready to push, ingest configuration first')
         return
 
     mist_apps = {}
@@ -278,6 +468,47 @@ def push_apps():
             if response.status_code != 200:
                 print('Error pushing '+mapp["name"]+'. Response: '+str(response.data))
     return
+
+def push_nets():
+    if not os.path.exists('organized_nets.json'):
+        print('There are no Mist Networks ready to push, ingest configuration first')
+        return
+
+    with open('organized_nets.json') as onj:
+        organized_nets = json.load(onj)
+
+    if UIToolsP3.getBool('Push now? '):
+        for zone in organized_nets.values():
+            for indirect_net in zone['indirect nets'].values():
+                response = mistapi.api.v1.orgs.networks.createOrgNetwork(apisession, org_id, indirect_net)
+                print(str(response.data))
+                if response.status_code != 200:
+                    print('Error pushing ' + indirect_net["name"] + '. Response: ' + str(response.data))
+            for int_net in zone['interface nets'].values():
+                response = mistapi.api.v1.orgs.networks.createOrgNetwork(apisession, org_id, int_net)
+                print(str(response.data))
+                if response.status_code != 200:
+                    print('Error pushing ' + int_net["name"] + '. Response: ' + str(response.data))
+    return
+
+def push_policies():
+    if not os.path.exists('mist_policies.json'):
+        print('There are no Mist Policies ready to push, ingest configuration first')
+        return
+
+    mist_apps = {}
+    with open('mist_policies.json') as maj:
+        mist_policies = json.load(maj)
+    print('There are '+str(len(mist_policies))+' Mist Policies ready to push')
+
+    if UIToolsP3.getBool('Push now? '):
+        for mpol in mist_policies.values():
+            response = mistapi.api.v1.orgs.servicepolicies.createOrgServicePolicy(apisession, org_id, mpol)
+            print(str(response.data))
+            if response.status_code != 200:
+                print('Error pushing '+mpol["name"]+'. Response: '+str(response.data))
+    return
+
 
 def usage():
     print('''
@@ -325,7 +556,7 @@ ingest_menu = UIToolsP3.Menu('Ingest Data Menu')
 ingest_menu.menuOptions = {'From SRX': ingest_SRX, 'Back': 'Back', 'Quit': 'Quit'}
 
 push_menu = UIToolsP3.Menu('Push to Mist')
-push_menu.menuOptions = {'Applications': push_apps, 'Back': 'Back', 'Quit': 'Quit'}
+push_menu.menuOptions = {'Applications': push_apps, 'Networks': push_nets, 'Back': 'Back', 'Quit': 'Quit'}
 
 main_menu = UIToolsP3.Menu('Main Menu')
 main_menu.menuOptions = {'Ingest Data': ingest_menu, 'Push to Mist':push_menu, 'Quit': 'Quit'}
