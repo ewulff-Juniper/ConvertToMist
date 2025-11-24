@@ -16,6 +16,14 @@ env_file = "~/.mist_env"
 conf_file = None
 org_id = None
 
+def name_cleanser(old_name):
+    new_name = old_name.strip().replace('.','_').replace('-','_').replace(' ','_')
+    if len(new_name) > 32:
+        new_new_name = new_name[:32]
+        print(new_name+' is too long (exceeds 32 characters) renaming to '+new_new_name)
+        new_name = new_new_name
+    return new_name
+
 def read_junos_apps(conf_file):
     '''
     :param conf_file:
@@ -334,7 +342,7 @@ def ingest_SRX():
             #Build Mist App
             mist_services = []
             dapp_obj = policy['Application']['match_set']
-            mist_app = {"name": policy['Application']['app_name'],
+            mist_app = {"name": name_cleanser(policy['Application']['app_name']),
                         "description": 'Original Policy Name: '+policy_name,
                         "type": "custom",
                         "traffic_type": "default",
@@ -365,7 +373,9 @@ def ingest_SRX():
                     if existing_app_copy == new_app_copy:
                         print('Fully duplicate app')
                     else:
-                        mist_app['name'] += '_dupe' #TODO better dupe handling
+                        old_name = mist_app['name'][:27]
+                        old_name += '_dupe'
+                        mist_app['name'] = old_name #TODO better dupe handling
             dapp_obj["mist_app"] = mist_app
             mist_apps[mist_app["name"]] = mist_app
             mist_services = [mist_app['name']]
@@ -388,7 +398,7 @@ def ingest_SRX():
                                 int_net = IPNetwork(junos_interfaces[zint_name]['units'][zint_unit]['address'])
                                 if zint not in organized_nets[source_zone]['interface nets']:
                                     organized_nets[source_zone]['interface nets'][zint] = {
-                                        'name': (source_zone+'_'+zint).replace('.','_').replace('-','_').replace(' ','_'),
+                                        'name': name_cleanser(source_zone+'_'+zint),
                                         'subnet': str(int_net.cidr),
                                         'routed_for_networks': []
                                     }
@@ -400,17 +410,18 @@ def ingest_SRX():
             #Build Indirect Networks
             mist_tenants = []
             for source_addr in policy['Application']['match_set']['source-address']:
-                addr_name = (source_zone+'_'+source_addr).replace('.','_').replace('-','_').replace(' ','_')
+                addr_name = name_cleanser(source_zone+'_'+source_addr)
                 if source_addr in junos_adds:
                     idx = 0
                     for result in junos_adds[source_addr]:
                         idx += 1
                         if result not in organized_nets[source_zone]['indirect nets']:
+                            new_name = name_cleanser(addr_name+'_'+str(idx))
                             organized_nets[source_zone]['indirect nets'][result] = {
-                                'name': addr_name+'_'+str(idx),
+                                'name': new_name,
                                 'subnet': result
                             }
-                            mist_tenants.append(addr_name+'_'+str(idx))
+                            mist_tenants.append(new_name)
                         else:  mist_tenants.append(organized_nets[source_zone]['indirect nets'][result]['name'])
                 elif source_addr == "any":
                     if addr_name not in organized_nets[source_zone]['indirect nets']:
@@ -423,7 +434,7 @@ def ingest_SRX():
                 else: print('Source address '+source_addr+' not found')
 
             #Build Policy
-            mist_policy_name = policy_name.strip().replace('.','_').replace('-','_').replace(' ','_')
+            mist_policy_name = name_cleanser(policy_name)
             mist_policies[policy_name] = {
                 'name': mist_policy_name,
                 'action': 'allow' if policy['Action'] == 'permit' else 'deny',
@@ -556,7 +567,7 @@ ingest_menu = UIToolsP3.Menu('Ingest Data Menu')
 ingest_menu.menuOptions = {'From SRX': ingest_SRX, 'Back': 'Back', 'Quit': 'Quit'}
 
 push_menu = UIToolsP3.Menu('Push to Mist')
-push_menu.menuOptions = {'Applications': push_apps, 'Networks': push_nets, 'Back': 'Back', 'Quit': 'Quit'}
+push_menu.menuOptions = {'Applications': push_apps, 'Networks': push_nets, 'Policies': push_policies, 'Back': 'Back', 'Quit': 'Quit'}
 
 main_menu = UIToolsP3.Menu('Main Menu')
 main_menu.menuOptions = {'Ingest Data': ingest_menu, 'Push to Mist':push_menu, 'Quit': 'Quit'}
